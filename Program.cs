@@ -18,14 +18,16 @@
 
             string sourceDir = arguments.GetValueOrDefault("source", "xml_data_source");
             string dataDir = arguments.GetValueOrDefault("data", "Data");
+            string suffix = arguments.GetValueOrDefault("suffix", "generated");
 
-            Console.WriteLine($"Creating bar file to [{dataDir}] with data source from [{sourceDir}]");
+            Console.WriteLine($"Creating bar file based on [{dataDir}] with data source from [{sourceDir}]");
 
             var files = Directory.EnumerateFiles(sourceDir, "*.xml", SearchOption.AllDirectories);
             List<Task> tasks = [];
             foreach (var file in files)
             {
                 var relative = Path.GetRelativePath(sourceDir, file);
+                Console.WriteLine($"Collected XML file: {relative}");
                 var targetFile = Path.Combine(dataDir, relative);
 
                 var task = XMBFile.CreateXMBFileALZ4(file, targetFile + ".xmb");
@@ -37,24 +39,14 @@
                 task.Wait();
             }
 
-            string suffix = "";
-            string gitDir = Path.Combine(sourceDir, ".git");
-            if (Directory.Exists(gitDir))
+            if (string.IsNullOrEmpty(suffix))
             {
-                try {
-                    string head = File.ReadAllText(Path.Combine(gitDir, "HEAD"));
-                    if (head.StartsWith("ref:"))
-                    {
-                        string headFile = head.Substring(4).Trim();
-                        suffix = "-" + File.ReadAllText(Path.Combine(gitDir, headFile)).Trim();
-                    }
-                } catch (IOException e)
-                {
-                    Console.WriteLine(e.Message);
-                }
+                BarFile.Create(dataDir, "Data").Wait();
             }
-
-            BarFile.Create(dataDir, "Data_generated" + suffix).Wait();
+            else
+            {
+                BarFile.Create(dataDir, "Data_" + suffix).Wait();
+            }
 
             var cost = (DateTime.Now - begin).Milliseconds;
             Console.WriteLine($"Finished. Time Cost: {cost} ms");
