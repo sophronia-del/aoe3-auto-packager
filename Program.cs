@@ -22,7 +22,8 @@
 
             Console.WriteLine($"Creating bar file based on [{dataDir}] with data source from [{sourceDir}]");
 
-            var files = Directory.EnumerateFiles(sourceDir, "*.xml", SearchOption.AllDirectories);
+            List<string> files = [];
+            CollectXmlFiles(sourceDir, files);
             List<Task> tasks = [];
             foreach (var file in files)
             {
@@ -50,6 +51,22 @@
 
             var cost = (DateTime.Now - begin).Milliseconds;
             Console.WriteLine($"Finished. Time Cost: {cost} ms");
+        }
+
+        private static void CollectXmlFiles(string current, List<string> container)
+        {
+            string[] directDirectories = Directory.GetDirectories(current);
+            foreach (var dir in directDirectories)
+            {
+                if (dir.StartsWith('.'))
+                {
+                    continue;
+                }
+
+                CollectXmlFiles(dir, container);
+            }
+
+            container.AddRange(Directory.GetFiles(current, "*.xml"));
         }
     }
 }

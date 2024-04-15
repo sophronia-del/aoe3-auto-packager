@@ -35,13 +35,14 @@ namespace aoe3_auto_packager
             BarFile barFile = new();
 
             if (!Directory.Exists(root))
-                throw new Exception("Directory does not exist!");
+                throw new Exception($"Directory {root} does not exist!");
 
             var files = Directory.GetFiles(root, "*", SearchOption.AllDirectories);
 
 
             using (var fileStream = File.Open(Path.Combine(Directory.GetParent(root)!.FullName, filename + ".bar"), FileMode.Create, FileAccess.Write, FileShare.None))
             {
+                Console.WriteLine($"Generating bar file: {fileStream.Name}");
                 using var writer = new BinaryWriter(fileStream);
                 //Write Bar Header
                 var header = new BarFileHeader(files, filename + ".bar");
