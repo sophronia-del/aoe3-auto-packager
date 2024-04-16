@@ -2,6 +2,8 @@
 {
     internal class Program
     {
+        private static readonly HashSet<string> s_extensions = ["blueprint", "physics", "tactics", "xml"];
+
         static void Main(string[] args)
         {
             var begin = DateTime.Now;
@@ -58,7 +60,7 @@
             string[] directDirectories = Directory.GetDirectories(current);
             foreach (var dir in directDirectories)
             {
-                if (dir.StartsWith('.'))
+                if (Path.GetFileName(dir)!.StartsWith('.'))
                 {
                     continue;
                 }
@@ -66,7 +68,19 @@
                 CollectXmlFiles(dir, container);
             }
 
-            container.AddRange(Directory.GetFiles(current, "*.xml"));
+            string[] files = Directory.GetFiles(current);
+            foreach(var file in files)
+            {
+                int last = file.LastIndexOf('.');
+                if (last >= 0 && last < file.Length - 1)
+                {
+                    string extension = file[(last + 1)..];
+                    if (s_extensions.Contains(extension))
+                    {
+                        container.Add(file);
+                    }
+                }
+            }
         }
     }
 }

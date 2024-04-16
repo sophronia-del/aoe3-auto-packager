@@ -136,28 +136,23 @@ namespace aoe3_auto_packager
         {
             try
             {
+                using var fileStream = File.Open(outputFileName, FileMode.Create, FileAccess.Write, FileShare.None);
+                using var outputFileStreamWriter = new BinaryWriter(fileStream);
 
-                using (var fileStream = new MemoryStream(inputBytes))
-                using (var fileStreamFinal = File.Open(outputFileName, FileMode.Create, FileAccess.Write, FileShare.None))
-                using (var outputFileStreamWriter = new BinaryWriter(fileStreamFinal))
+                outputFileStreamWriter.Write(alz4Header.ToCharArray());
+                outputFileStreamWriter.Write(Convert.ToInt32(inputBytes.Length));
+                await Task.Run(() =>
                 {
-                    outputFileStreamWriter.Write(alz4Header.ToCharArray());
-                    outputFileStreamWriter.Write(Convert.ToInt32(inputBytes.Length));
-                    await Task.Run(() =>
-                    {
-                        var data = new byte[LZ4Codec.MaximumOutputSize(inputBytes.Length)];
-                        var compressedSize = LZ4Codec.Encode(inputBytes, 0, inputBytes.Length, data, 0, data.Length);
+                    var data = new byte[LZ4Codec.MaximumOutputSize(inputBytes.Length)];
+                    var compressedSize = LZ4Codec.Encode(inputBytes, 0, inputBytes.Length, data, 0, data.Length);
 
-                        //var data = LZ4Pickler.Pickle(inputBytes);
+                    //var data = LZ4Pickler.Pickle(inputBytes);
 
-                        outputFileStreamWriter.Write(Convert.ToInt32(compressedSize));
-                        outputFileStreamWriter.Write(Convert.ToInt32(1));
-                        outputFileStreamWriter.Write(data, 0, compressedSize);
-                    });
-                    
+                    outputFileStreamWriter.Write(Convert.ToInt32(compressedSize));
+                    outputFileStreamWriter.Write(Convert.ToInt32(1));
+                    outputFileStreamWriter.Write(data, 0, compressedSize);
+                });
 
-                }
-      
             }
             catch (Exception)
             {
