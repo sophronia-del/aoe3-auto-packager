@@ -36,72 +36,60 @@ namespace aoe3_auto_packager
 
         public static bool IsAlz4File(string fileName)
         {
-            using (var fileStream = File.Open(fileName, FileMode.Open))
-            {
-                return StreamIsAlz4(fileStream);
-            }
+            using var fileStream = File.Open(fileName, FileMode.Open);
+            return StreamIsAlz4(fileStream);
         }
 
         public static bool IsAlz4File(byte[] data)
         {
-            using (var memoryStream = new MemoryStream(data, false))
-            {
-                return StreamIsAlz4(memoryStream);
-            }
+            using var memoryStream = new MemoryStream(data, false);
+            return StreamIsAlz4(memoryStream);
         }
 
         private static bool StreamIsAlz4(Stream stream)
         {
-            using (var reader = new BinaryReader(stream))
+            using var reader = new BinaryReader(stream);
+            try
             {
-                try
-                {
-                    var fileHeader = new string(reader.ReadChars(4));
-                    return fileHeader == alz4Header;
-                }
-                catch (Exception)
-                {
-                    return false;
-                }
+                var fileHeader = new string(reader.ReadChars(4));
+                return fileHeader == alz4Header;
+            }
+            catch (Exception)
+            {
+                return false;
             }
         }
 
         #endregion
         public static async Task<byte[]> ExtractAlz4BytesAsync(byte[] zipData)
         {
-            using (var fileStream = new MemoryStream(zipData, false))
-            using (var fileStreamReader = new BinaryReader(fileStream))
-                return await ExtractAlz4StreamAsync(fileStreamReader);
+            using var fileStream = new MemoryStream(zipData, false);
+            using var fileStreamReader = new BinaryReader(fileStream);
+            return await ExtractAlz4StreamAsync(fileStreamReader);
         }
 
 
         public static async Task<int> ReadCompressedSizeAlz4Async(string inputFileName)
         {
-
-
-
             var data = await File.ReadAllBytesAsync(inputFileName);
 
-            using (var fileStream = new MemoryStream(data, false))
-            using (var reader = new BinaryReader(fileStream))
+            using var fileStream = new MemoryStream(data, false);
+            using var reader = new BinaryReader(fileStream);
+
+            var fileHeader = new string(reader.ReadChars(4));
+            int compressedFileSize;
+            int uncompressedFileSize;
+
+            switch (fileHeader.ToLower())
             {
-                var fileHeader = new string(reader.ReadChars(4));
-                int compressedFileSize;
-                int uncompressedFileSize;
+                case alz4Header:
 
-                switch (fileHeader.ToLower())
-                {
-                    case alz4Header:
-
-                        uncompressedFileSize = reader.ReadInt32();
-                        compressedFileSize = reader.ReadInt32();
-                        return compressedFileSize;
-                    default:
-                        throw new FileLoadException($"Header '{fileHeader}' is not recognized as a valid type");
-                }
+                    uncompressedFileSize = reader.ReadInt32();
+                    compressedFileSize = reader.ReadInt32();
+                    return compressedFileSize;
+                default:
+                    throw new FileLoadException($"Header '{fileHeader}' is not recognized as a valid type");
             }
-
-
         }
 
 

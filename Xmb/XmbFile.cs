@@ -30,25 +30,29 @@ namespace aoe3_auto_packager
 {
     public class XMBFile
     {
-
-
         #region Convert To XMB
-        public class XmlString
+        class XmlString
         {
             public string? Content { get; set; }
             public int Size { get; set; }
         }
 
-        static void ExtractStrings(XmlNode node, ref List<XmlString> elements, ref List<XmlString> attributes)
+        class NodeDetail
         {
-            if (!elements.Any(x => x.Content == node.Name))
-                elements.Add(new XmlString() { Content = node.Name, Size = elements.Count });
+            public long Offset { get; set; }
+            public int Length { get; set; }
+            public XmlNode Node { get; set; }
+            public int NumChildren { get; set; }
+            public NodeDetail? Parent { get; set; }
+        }
+
+        static void ExtractStrings(XmlNode node, ref Dictionary<string, XmlString> elements, ref Dictionary<string, XmlString> attributes)
+        {
+            elements.TryAdd(node.Name, new XmlString() { Content = node.Name, Size = elements.Count });
 
             foreach (XmlAttribute attr in node.Attributes!)
-                if (!attributes.Any(x => x.Content == attr.Name))
-                    attributes.Add(new XmlString() { Content = attr.Name, Size = attributes.Count });
+                attributes.TryAdd(attr.Name, new XmlString() { Content = attr.Name, Size = attributes.Count });
 
-            int count = node.ChildNodes.Count;
             foreach (XmlNode child in node.ChildNodes)
             {
                 if (child.NodeType == XmlNodeType.Element)
@@ -57,93 +61,156 @@ namespace aoe3_auto_packager
 
         }
 
-        static void WriteNode(ref BinaryWriter writer, XmlNode node, List<XmlString> elements, List<XmlString> attributes)
+        static int ExtractNodeDetails(NodeDetail? parent, XmlNode node, long offset, List<NodeDetail> collector, Dictionary<string, XmlString> elements, Dictionary<string, XmlString> attributes)
         {
-            writer.Write((byte)88);
-            writer.Write((byte)78);
+            int currentLength = 2 + sizeof(int); // fixed header + byte length
 
-
-            long Length_off = writer.BaseStream.Position;
-            // length in bytes
-            writer.Write(0);
-            if (node.HasChildNodes)
+            // innerTextLength
+            currentLength += sizeof(int);
+            if (node.HasChildNodes && node.FirstChild!.NodeType == XmlNodeType.Text)
             {
-                if (node.FirstChild!.NodeType == XmlNodeType.Text)
-                {
-
-                    // innerTextLength
-                    writer.Write(node.FirstChild.Value!.Length);
-                    // innerText
-                    if (node.FirstChild.Value.Length != 0)
-                        writer.Write(Encoding.Unicode.GetBytes(node.FirstChild.Value));
-                }
-                else
-                {
-                    // innerTextLength
-                    writer.Write(0);
-                }
+                currentLength += Encoding.Unicode.GetByteCount(node.FirstChild.Value!);
             }
-            else
-            {
 
-                // innerTextLength
-                writer.Write(0);
-
-            }
             // nameID
-            int NameID = elements.FirstOrDefault(x => x.Content == node.Name)!.Size;
-            writer.Write(NameID);
-
-            /*      int lineNum = 0;
-                  for (int i = 0; i < elements.Count; i++)
-                      if (elements[i].Content == node.Name)
-                      {
-                          lineNum = i;
-                          break;
-                      }*/
-            // Line number ... need recount
-            writer.Write(0);
+            currentLength += 2 * sizeof(int);
 
 
             int NumAttributes = node.Attributes!.Count;
             // length attributes
-            writer.Write(NumAttributes);
+            currentLength += sizeof(int);
             for (int i = 0; i < NumAttributes; ++i)
             {
-
-                int n = attributes.FirstOrDefault(x => x.Content == node.Attributes[i].Name)!.Size;
                 // attrID
-                writer.Write(n);
+                currentLength += sizeof(int);
                 // attributeLength
-                writer.Write(node.Attributes[i].InnerText.Length);
+                currentLength += sizeof(int);
                 // attribute.InnerText
-                writer.Write(Encoding.Unicode.GetBytes(node.Attributes[i].InnerText));
+                currentLength += Encoding.Unicode.GetByteCount(node.Attributes[i].InnerText);
             }
 
-            int NumChildren = 0;
-            for (int i = 0; i < node.ChildNodes.Count; i++)
+            // Write later, put a placeholder here
+            currentLength += sizeof(int);
+
+            NodeDetail nodeDetail = new()
             {
+                Offset = offset,
+                Length = currentLength,
+                Node = node,
+                Parent = parent,
+            };
+            collector.Add(nodeDetail);
 
-                if (node.ChildNodes[i]!.NodeType == XmlNodeType.Element)
+            int totalLength = currentLength;
+            long nextOffset = offset + currentLength;
+            foreach (XmlNode child in node.ChildNodes)
+            {
+                // root -> a1 -> b1
+                //      -> a2 -> b2
+                //            -> b3
+
+                // direct
+                // root n1
+                // a1   n2
+                // a2   n3
+                // b1   n4
+                // b2   n5
+                // b3   n6
+
+                // addition
+                // b1   n(a1) += n(b1);   => n(a1) = n2 + n4,
+                // b1   n(root) += n(b1); => n(root) = n1 + n4
+                // a1   n(root) += n(a1); => n(root) = n1 + n4 + n2 + n4; #ERROR#
+
+                if (child.NodeType == XmlNodeType.Element)
                 {
-                    NumChildren++;
-
+                    int nextLength = ExtractNodeDetails(nodeDetail, child, nextOffset, collector, elements, attributes);
+                    totalLength += nextLength;
+                    nextOffset += nextLength;
+                    nodeDetail.Length += nextLength;
+                    nodeDetail.NumChildren++;
                 }
             }
-            // NumChildren nodes (recursively)
-            writer.Write(NumChildren);
-            for (int i = 0; i < node.ChildNodes.Count; ++i)
-                if (node.ChildNodes[i]!.NodeType == XmlNodeType.Element)
+
+            return nodeDetail.Length;
+        }
+
+        static Task WriteNodeAsync(byte[] bytes, NodeDetail nodeDetail, Dictionary<string, XmlString> elements, Dictionary<string, XmlString> attributes)
+        {
+            return Task.Run(() =>
+            {
+                int cursor = (int)nodeDetail.Offset;
+                bytes[cursor++] = (byte)'X';
+                bytes[cursor++] = (byte)'N';
+
+                // length in bytes
+                BitConverter.TryWriteBytes(new Span<byte>(bytes, cursor, sizeof(int)), nodeDetail.Length - 6);
+                cursor += sizeof(int);
+
+                XmlNode node = nodeDetail.Node;
+                if (node.HasChildNodes)
                 {
+                    if (node.FirstChild!.NodeType == XmlNodeType.Text)
+                    {
 
-                    WriteNode(ref writer, node.ChildNodes[i]!, elements, attributes);
-
+                        // innerTextLength
+                        BitConverter.TryWriteBytes(new Span<byte>(bytes, cursor, sizeof(int)), node.FirstChild.Value!.Length);
+                        cursor += sizeof(int);
+                        // innerText
+                        if (node.FirstChild.Value.Length != 0) {
+                            byte[] valueBytes = Encoding.Unicode.GetBytes(node.FirstChild.Value);
+                            Array.Copy(valueBytes, 0, bytes, cursor, valueBytes.Length);
+                            cursor += valueBytes.Length;
+                        }
+                        else
+                        {
+                            // innerTextLength
+                            BitConverter.TryWriteBytes(new Span<byte>(bytes, cursor, sizeof(int)), 0);
+                            cursor += sizeof(int);
+                        }
+                    }
+                    else
+                    {
+                        // innerTextLength
+                        BitConverter.TryWriteBytes(new Span<byte>(bytes, cursor, sizeof(int)), 0);
+                        cursor += sizeof(int);
+                    }
                 }
-            long NodeEnd = writer.BaseStream.Position;
-            writer.BaseStream.Seek(Length_off, SeekOrigin.Begin);
+                else
+                {
+                    // innerTextLength
+                    BitConverter.TryWriteBytes(new Span<byte>(bytes, cursor, sizeof(int)), 0);
+                    cursor += sizeof(int);
+                }
+                // nameID
+                int NameID = elements[node.Name].Size;
+                BitConverter.TryWriteBytes(new Span<byte>(bytes, cursor, sizeof(int)), NameID);
+                cursor += sizeof(int);
+                BitConverter.TryWriteBytes(new Span<byte>(bytes, cursor, sizeof(int)), 0);
+                cursor += sizeof(int);
 
-            writer.Write((int)(NodeEnd - (Length_off + 4)));
-            writer.BaseStream.Seek(NodeEnd, SeekOrigin.Begin);
+
+                int NumAttributes = node.Attributes!.Count;
+                // length attributes
+                BitConverter.TryWriteBytes(new Span<byte>(bytes, cursor, sizeof(int)), NumAttributes);
+                cursor += sizeof(int);
+                for (int i = 0; i < NumAttributes; ++i)
+                {
+                    int n = attributes[node.Attributes[i].Name].Size;
+                    // attrID
+                    BitConverter.TryWriteBytes(new Span<byte>(bytes, cursor, sizeof(int)), n);
+                    cursor += sizeof(int);
+                    // attributeLength
+                    BitConverter.TryWriteBytes(new Span<byte>(bytes, cursor, sizeof(int)), node.Attributes[i].InnerText.Length);
+                    cursor += sizeof(int);
+                    // attribute.InnerText
+                    byte[] valueBytes = Encoding.Unicode.GetBytes(node.Attributes[i].InnerText);
+                    Array.Copy(valueBytes, 0, bytes, cursor, valueBytes.Length);
+                    cursor += valueBytes.Length;
+                }
+
+                BitConverter.TryWriteBytes(new Span<byte>(bytes, cursor, sizeof(int)), nodeDetail.NumChildren);
+            });
         }
 
         public static async Task CreateXMBFileALZ4(string inputFileName, string outputFileName)
@@ -152,61 +219,67 @@ namespace aoe3_auto_packager
 
             var writer = new BinaryWriter(output, Encoding.Default, true);
 
-            writer.Write((byte)88);
-            writer.Write((byte)49);
+            writer.Write((byte)'X');
+            writer.Write((byte)'1');
 
+            // Length
             writer.Write(0);
 
-            writer.Write((byte)88);
-            writer.Write((byte)82);
+            writer.Write((byte)'X');
+            writer.Write((byte)'R');
             writer.Write(4);
             writer.Write(8);
 
 
-            XmlDocument file = new XmlDocument();
+            XmlDocument file = new();
             file.Load(inputFileName);
             XmlNode rootElement = file.FirstChild!;
 
 
             // Get the list of element/attribute names, sorted by first appearance
-            List<XmlString> ElementNames = [];
-            List<XmlString> AttributeNames = [];
-            await Task.Run(() =>
-            {
-                ExtractStrings(file.DocumentElement!, ref ElementNames, ref AttributeNames);
+            Dictionary<string, XmlString> elements = [];
+            Dictionary<string, XmlString> attributes = [];
+            List<NodeDetail> nodeDetails = [];
 
+            int nodeByteCount = await Task.Run(() =>
+            {
+                ExtractStrings(file.DocumentElement!, ref elements, ref attributes);
+
+                // Output element names
+                int NumElements = elements.Count;
+                writer.Write(NumElements);
+                foreach (var key in elements.Keys)
+                {
+                    writer.Write(key.Length);
+                    writer.Write(Encoding.Unicode.GetBytes(key));
+                }
+
+                int NumAttributes = attributes.Count;
+                writer.Write(NumAttributes);
+                foreach (var key in attributes.Keys)
+                {
+                    writer.Write(key.Length);
+                    writer.Write(Encoding.Unicode.GetBytes(key));
+                }
+
+                return ExtractNodeDetails(null, file.DocumentElement!, output.Position, nodeDetails, elements, attributes);
             });
+            output.Capacity = (int)output.Position + nodeByteCount;
+            output.Seek(output.Capacity - 4, SeekOrigin.Begin);
+            writer.Write(0);
 
-            // Output element names
-            int NumElements = ElementNames.Count;
-            writer.Write(NumElements);
-            for (int i = 0; i < NumElements; ++i)
+
+            List<Task> encodeTasks = new(nodeDetails.Count);
+            foreach (var nodeDetail in nodeDetails)
             {
-                writer.Write(ElementNames[i].Content!.Length);
-                writer.Write(Encoding.Unicode.GetBytes(ElementNames[i].Content!));
+                encodeTasks.Add(WriteNodeAsync(output.GetBuffer(), nodeDetail, elements, attributes));
             }
 
-            int NumAttributes = AttributeNames.Count;
-            writer.Write(NumAttributes);
-            for (int i = 0; i < NumAttributes; ++i)
-            {
-                writer.Write(AttributeNames[i].Content!.Length);
-                writer.Write(Encoding.Unicode.GetBytes(AttributeNames[i].Content!));
-            }
-
-            // Output root node, plus all descendants
-            await Task.Run(() =>
-            {
-                WriteNode(ref writer, rootElement, ElementNames, AttributeNames);
-            });
-
+            await Task.WhenAll(encodeTasks);
 
             // Fill in data-length field near the beginning
-            long DataEnd = writer.BaseStream.Position;
             writer.BaseStream.Seek(2, SeekOrigin.Begin);
-            int Length = (int)(DataEnd - (2 + 4));
-            writer.Write(Length);
-            writer.BaseStream.Seek(DataEnd, SeekOrigin.Begin);
+            writer.Write(output.Capacity - (2 + 4));
             await Alz4Utils.CompressBytesAsAlz4Async(output.ToArray(), outputFileName);
         }
         #endregion

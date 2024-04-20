@@ -7,6 +7,7 @@
         static void Main(string[] args)
         {
             var begin = DateTime.Now;
+            Console.WriteLine($"Start at ${DateTime.Now}");
 
             Dictionary<string, string> arguments = [];
             foreach (var arg in args)
@@ -26,21 +27,19 @@
 
             List<string> files = [];
             CollectXmlFiles(sourceDir, files);
-            List<Task> tasks = [];
-            foreach (var file in files)
+            Task[] tasks = new Task[files.Count];
+            for (int i = 0; i < files.Count; i++)
             {
+                string file = files[i];
                 var relative = Path.GetRelativePath(sourceDir, file);
                 Console.WriteLine($"Collected XML file: {relative}");
                 var targetFile = Path.Combine(dataDir, relative);
 
                 var task = XMBFile.CreateXMBFileALZ4(file, targetFile + ".xmb");
-                tasks.Add(task);
+                tasks[i] = task;
             }
 
-            foreach (var task in tasks)
-            {
-                task.Wait();
-            }
+            Task.WaitAll(tasks);
 
             if (string.IsNullOrEmpty(suffix))
             {
@@ -51,8 +50,8 @@
                 BarFile.Create(dataDir, "Data_" + suffix).Wait();
             }
 
-            var cost = (DateTime.Now - begin).Milliseconds;
-            Console.WriteLine($"Finished. Time Cost: {cost} ms");
+            var cost = (DateTime.Now - begin).TotalMilliseconds;
+            Console.WriteLine($"Finished at ${DateTime.Now}. Time Cost: {cost} ms");
         }
 
         private static void CollectXmlFiles(string current, List<string> container)
