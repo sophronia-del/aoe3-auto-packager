@@ -21,11 +21,18 @@
             string sourceDir = arguments.GetValueOrDefault("source", "xml_data_source");
             string dataDir = arguments.GetValueOrDefault("data", "Data");
             string suffix = arguments.GetValueOrDefault("suffix", "generated");
+            string filter = arguments.GetValueOrDefault("filter", "");
+
+            ISet<string>? pathFilter = filter.Length == 0 ?
+                null :
+                filter.Split(",").
+                Select(s => Path.Join(sourceDir, s.Replace('/', '\\'))).
+                ToHashSet();
 
             Console.WriteLine($"Creating bar file based on [{dataDir}] with data source from [{sourceDir}]");
 
             List<string> files = [];
-            CollectXmlFiles(sourceDir, files);
+            CollectXmlFiles(sourceDir, files, pathFilter);
             List<Task> tasks = [];
             foreach (var file in files)
             {
@@ -51,11 +58,11 @@
                 BarFile.Create(dataDir, "Data_" + suffix).Wait();
             }
 
-            var cost = (DateTime.Now - begin).Milliseconds;
+            var cost = (DateTime.Now - begin).TotalMilliseconds;
             Console.WriteLine($"Finished. Time Cost: {cost} ms");
         }
 
-        private static void CollectXmlFiles(string current, List<string> container)
+        private static void CollectXmlFiles(string current, List<string> container, ISet<string>? pathFilter)
         {
             string[] directDirectories = Directory.GetDirectories(current);
             foreach (var dir in directDirectories)
@@ -65,12 +72,17 @@
                     continue;
                 }
 
-                CollectXmlFiles(dir, container);
+                CollectXmlFiles(dir, container, pathFilter);
             }
 
             string[] files = Directory.GetFiles(current);
             foreach(var file in files)
             {
+                if (pathFilter != null && !pathFilter.Contains(file))
+                {
+                    continue;
+                }
+
                 int last = file.LastIndexOf('.');
                 if (last >= 0 && last < file.Length - 1)
                 {
