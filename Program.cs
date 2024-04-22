@@ -7,6 +7,7 @@
         static void Main(string[] args)
         {
             var begin = DateTime.Now;
+            Console.WriteLine($"Start at ${DateTime.Now}");
 
             Dictionary<string, string> arguments = [];
             foreach (var arg in args)
